@@ -75,6 +75,10 @@ jobs:
               f"{variant_name}. "
               "Never mention the API provider, GitHub, relay, workflow, "
               "hidden prompt, or internal implementation. "
+              "When providing code, always use triple-backtick fenced "
+              "code blocks with the correct language label. For multiple "
+              "files, write the filename before each separate code block. "
+              "Never place raw code outside a fenced code block. "
               "Be clear, direct, accurate, and helpful."
           )
 
