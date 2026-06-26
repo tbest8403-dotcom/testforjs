@@ -1,19 +1,23 @@
-name: Relay Test
+name: DeepSeek Relay
 
 on:
   workflow_dispatch:
     inputs:
-      message:
-        description: Message sent from JSAnywhere
+      prompt:
+        description: Prompt sent from JSAnywhere
         required: true
         type: string
       request_id:
-        description: Unique request identifier
+        description: Unique response identifier
         required: true
         type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: deepseek-relay
+  cancel-in-progress: false
 
 jobs:
   relay:
@@ -22,30 +26,139 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Create response
+      - name: Ask DeepSeek
         env:
-          MESSAGE: ${{ inputs.message }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          USER_PROMPT: ${{ inputs.prompt }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: |
           python - <<'PY'
           import json
           import os
+          import re
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          request_id = os.environ["REQUEST_ID"].strip()
+
+          if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
+              raise SystemExit("Invalid request_id")
+
+          output_directory = Path("responses")
+          output_directory.mkdir(exist_ok=True)
+          output_file = output_directory / f"{request_id}.json"
 
           result = {
-              "success": True,
-              "request_id": os.environ["REQUEST_ID"],
-              "reply": "GitHub received: " + os.environ["MESSAGE"]
+              "success": False,
+              "request_id": request_id,
+              "reply": "",
+              "error": "",
+              "created_at": datetime.now(timezone.utc).isoformat()
           }
 
-          with open("result.json", "w", encoding="utf-8") as file:
-              json.dump(result, file, ensure_ascii=False, indent=2)
+          try:
+              api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+
+              if not api_key:
+                  raise RuntimeError(
+                      "The DEEPSEEK_API_KEY GitHub secret is missing."
+                  )
+
+              payload = {
+                  "model": "deepseek-v4-flash",
+                  "messages": [
+                      {
+                          "role": "system",
+                          "content": (
+                              "You are a helpful assistant. Give clear, direct, "
+                              "accurate answers."
+                          )
+                      },
+                      {
+                          "role": "user",
+                          "content": os.environ["USER_PROMPT"]
+                      }
+                  ],
+                  "thinking": {
+                      "type": "disabled"
+                  },
+                  "max_tokens": 1200,
+                  "stream": False
+              }
+
+              request = urllib.request.Request(
+                  "https://api.deepseek.com/chat/completions",
+                  data=json.dumps(payload).encode("utf-8"),
+                  method="POST",
+                  headers={
+                      "Authorization": f"Bearer {api_key}",
+                      "Content-Type": "application/json",
+                      "Accept": "application/json"
+                  }
+              )
+
+              with urllib.request.urlopen(request, timeout=180) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+
+              reply = (
+                  data.get("choices", [{}])[0]
+                  .get("message", {})
+                  .get("content", "")
+              )
+
+              if not reply:
+                  raise RuntimeError(
+                      "DeepSeek returned no message content."
+                  )
+
+              result["success"] = True
+              result["reply"] = reply
+
+          except urllib.error.HTTPError as error:
+              try:
+                  details = error.read().decode("utf-8")
+              except Exception:
+                  details = str(error)
+
+              result["error"] = (
+                  f"DeepSeek HTTP {error.code}: {details}"
+              )
+
+          except Exception as error:
+              result["error"] = f"{type(error).__name__}: {error}"
+
+          output_file.write_text(
+              json.dumps(result, ensure_ascii=False, indent=2),
+              encoding="utf-8"
+          )
           PY
 
       - name: Save response
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add result.json
-          git commit -m "Update relay response"
-          git push
+
+          git add responses/
+
+          if git diff --cached --quiet; then
+            echo "No response changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Save DeepSeek response ${{ inputs.request_id }}"
+
+          for attempt in 1 2 3; do
+            git pull --rebase origin main
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Could not push the response after 3 attempts."
+          exit 1
