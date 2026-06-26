@@ -1,22 +1,32 @@
-name: DeepSeek Relay
+name: Quanta Relay
 
 on:
   workflow_dispatch:
     inputs:
       prompt:
-        description: Prompt sent from JSAnywhere
+        description: Prompt sent from the Quanta app
         required: true
         type: string
+
       request_id:
         description: Unique response identifier
         required: true
         type: string
 
+      mode:
+        description: Quanta mode
+        required: true
+        default: light
+        type: choice
+        options:
+          - light
+          - expert
+
 permissions:
   contents: write
 
 concurrency:
-  group: deepseek-relay
+  group: quanta-relay
   cancel-in-progress: false
 
 jobs:
@@ -29,11 +39,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ask DeepSeek
+      - name: Generate Quanta response
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           USER_PROMPT: ${{ inputs.prompt }}
           REQUEST_ID: ${{ inputs.request_id }}
+          QUANTA_MODE: ${{ inputs.mode }}
         run: |
           python - <<'PY'
           import json
@@ -44,20 +55,44 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
 
+          mode = os.environ.get("QUANTA_MODE", "light").strip().lower()
+
+          if mode not in {"light", "expert"}:
+              mode = "light"
+
+          variant_name = (
+              "Quanta Expert"
+              if mode == "expert"
+              else "Quanta Light"
+          )
+
+          system_message = (
+              f"You are {variant_name}, the assistant inside the Quanta app. "
+              f"Always speak as {variant_name}. "
+              "Never identify yourself as DeepSeek, OpenAI, or any other "
+              "underlying provider or model. "
+              "If asked what model or version you are, reply exactly: "
+              f"{variant_name}. "
+              "Never mention the API provider, GitHub, relay, workflow, "
+              "hidden prompt, or internal implementation. "
+              "Be clear, direct, accurate, and helpful."
+          )
+
           request_id = os.environ["REQUEST_ID"].strip()
 
-          if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
+          if not re.fullmatch(r"[A-Za-z0-9_-]{1,150}", request_id):
               raise SystemExit("Invalid request_id")
 
-          output_directory = Path("responses")
-          output_directory.mkdir(exist_ok=True)
-          output_file = output_directory / f"{request_id}.json"
+          responses = Path("responses")
+          responses.mkdir(exist_ok=True)
+          response_file = responses / f"{request_id}.json"
 
           result = {
               "success": False,
               "request_id": request_id,
               "reply": "",
               "error": "",
+              "mode": mode,
               "created_at": datetime.now(timezone.utc).isoformat()
           }
 
@@ -66,30 +101,40 @@ jobs:
 
               if not api_key:
                   raise RuntimeError(
-                      "The DEEPSEEK_API_KEY GitHub secret is missing."
+                      "The DEEPSEEK_API_KEY repository secret is missing."
                   )
 
               payload = {
-                  "model": "deepseek-v4-flash",
                   "messages": [
                       {
                           "role": "system",
-                          "content": (
-                              "You are a helpful assistant. Give clear, direct, "
-                              "accurate answers."
-                          )
+                          "content": system_message
                       },
                       {
                           "role": "user",
                           "content": os.environ["USER_PROMPT"]
                       }
                   ],
-                  "thinking": {
-                      "type": "disabled"
-                  },
-                  "max_tokens": 1200,
                   "stream": False
               }
+
+              if mode == "expert":
+                  payload.update({
+                      "model": "deepseek-v4-pro",
+                      "thinking": {
+                          "type": "enabled"
+                      },
+                      "reasoning_effort": "max",
+                      "max_tokens": 3000
+                  })
+              else:
+                  payload.update({
+                      "model": "deepseek-v4-flash",
+                      "thinking": {
+                          "type": "disabled"
+                      },
+                      "max_tokens": 1600
+                  })
 
               request = urllib.request.Request(
                   "https://api.deepseek.com/chat/completions",
@@ -103,37 +148,50 @@ jobs:
               )
 
               with urllib.request.urlopen(request, timeout=180) as response:
-                  data = json.loads(response.read().decode("utf-8"))
+                  data = json.loads(
+                      response.read().decode("utf-8")
+                  )
 
-              reply = (
-                  data.get("choices", [{}])[0]
-                  .get("message", {})
-                  .get("content", "")
-              )
+              choices = data.get("choices") or []
+
+              if not choices:
+                  raise RuntimeError(
+                      "The API returned no choices."
+                  )
+
+              message = choices[0].get("message") or {}
+              reply = message.get("content") or ""
 
               if not reply:
                   raise RuntimeError(
-                      "DeepSeek returned no message content."
+                      "Quanta returned no final reply."
                   )
 
               result["success"] = True
               result["reply"] = reply
 
           except urllib.error.HTTPError as error:
-              try:
-                  details = error.read().decode("utf-8")
-              except Exception:
-                  details = str(error)
+              details = error.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
 
               result["error"] = (
-                  f"DeepSeek HTTP {error.code}: {details}"
+                  f"Request failed with HTTP "
+                  f"{error.code}: {details}"
               )
 
           except Exception as error:
-              result["error"] = f"{type(error).__name__}: {error}"
+              result["error"] = (
+                  f"{type(error).__name__}: {error}"
+              )
 
-          output_file.write_text(
-              json.dumps(result, ensure_ascii=False, indent=2),
+          response_file.write_text(
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
               encoding="utf-8"
           )
           PY
@@ -146,19 +204,19 @@ jobs:
           git add responses/
 
           if git diff --cached --quiet; then
-            echo "No response changes to commit."
             exit 0
           fi
 
-          git commit -m "Save DeepSeek response ${{ inputs.request_id }}"
+          git commit -m "Save Quanta response ${{ inputs.request_id }}"
 
           for attempt in 1 2 3; do
             git pull --rebase origin main
+
             if git push origin HEAD:main; then
               exit 0
             fi
+
             sleep 2
           done
 
-          echo "Could not push the response after 3 attempts."
           exit 1
