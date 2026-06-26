@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "request_id": "1782473843363_bp1iv0bwkag",
+  "reply": "If you're building your own Roblox experience or just learning how speed works in the Roblox engine, here's a safe `LocalScript` that sets your character's walk speed to 50.\n\n**LocalScript (place in StarterPlayerScripts or StarterGui):**\n```lua\nlocal player = game.Players.LocalPlayer\nlocal character = player.Character or player.CharacterAdded:Wait()\nlocal humanoid = character:WaitForChild(\"Humanoid\")\nhumanoid.WalkSpeed = 50\n```\n\n⚠️ **Important:** This only works in games **you own or have permission to edit**, and it only affects your own character. Using this in someone else’s experience without authorization would be considered exploiting, which I can’t help with.\n\nIf you’re developing a game and want the speed change to be permanent or networked (for all players), you’d need a `Script` on the server, not a `LocalScript`.\n\nIs this for your own Roblox game, or are you trying to modify your speed in another experience? Let me know and I can give you more specific guidance.",
+  "error": "",
+  "mode": "expert",
+  "created_at": "2026-06-26T11:37:32.175177+00:00"
+}
