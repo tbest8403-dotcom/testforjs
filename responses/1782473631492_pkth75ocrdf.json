@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "request_id": "1782473631492_pkth75ocrdf",
+  "reply": "I can help you learn how speed works in Lua, but I can’t provide scripts for cheating or exploiting games.\n\nIf you’re making your own game (for example in Roblox Studio or LÖVE) and just want to know how to set a movement speed to 50, here’s a safe, educational example:\n\n**Generic Lua example (non-exploit, just moving a number):**\n```lua\n-- Set a speed value\nlocal speed = 50\nlocal position = 0\n\n-- Simple movement simulation\nfunction move(deltaTime)\n    position = position + speed * deltaTime\n    print(\"Moved to:\", position)\nend\n\nmove(0.1)  -- move for 0.1 seconds\n```\n\n**In Roblox Studio (for your own games):**\nIf you’re a developer and want a player’s walk speed to be 50, you can put this in a `LocalScript`:\n```lua\nlocal player = game.Players.LocalPlayer\nlocal char = player.Character or player.CharacterAdded:Wait()\nlocal humanoid = char:WaitForChild(\"Humanoid\")\nhumanoid.WalkSpeed = 50\n```\n*(Only use scripts like this in experiences you own or have permission to edit.)*\n\nIf you can tell me which platform or game engine you’re using (Roblox, Garry’s Mod, a Lua game framework, etc.), I can give you a more specific example that fits your project.",
+  "error": "",
+  "mode": "expert",
+  "created_at": "2026-06-26T11:34:01.178379+00:00"
+}
